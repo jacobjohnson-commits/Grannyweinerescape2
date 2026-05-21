@@ -157,7 +157,22 @@ button.start:hover{background:#1a0a14;border-color:#a04050;color:#fed}
 <script>
 (function(){
 'use strict';
+  
+// === ADD / REPLACE LIGHT INITIALIZATION ===
+// 1. The Main Flashlight Spotlight
+const flashlight = new THREE.SpotLight(0xfff0d0, 0, 60, Math.PI / 5.5, 0.55, 1.0);
+const flashTarget = new THREE.Object3D();
+scene.add(flashlight);
+scene.add(flashTarget);
+flashlight.target = flashTarget;
 
+// 2. The High-Intensity Strobe Burst (Optional)
+const burstLight = new THREE.SpotLight(0xffffff, 0, 80, Math.PI / 1.6, 0.2, 0.4);
+const burstTarget = new THREE.Object3D();
+scene.add(burstLight);
+scene.add(burstTarget);
+burstLight.target = burstTarget;
+  
 // ============== RENDERER ==============
 const canvas = document.getElementById('c');
 const renderer = new THREE.WebGLRenderer({canvas, antialias:false, powerPreference:'high-performance'});
@@ -1906,6 +1921,7 @@ function drawMinimap(){
   mmx.fillStyle='#ffffff'; mmx.beginPath(); mmx.arc(0,0,1.5,0,Math.PI*2); mmx.fill();
   mmx.restore();
 
+  
   // Compass rose — top-left corner box
   const RO=14;
   mmx.fillStyle='rgba(4,8,10,0.72)'; mmx.fillRect(0,0,RO*2,RO*2);
@@ -1929,7 +1945,39 @@ function drawMinimap(){
   mmx.strokeStyle='#2c4c28'; mmx.lineWidth=1; mmx.strokeRect(0,0,W,H);
   mmx.strokeStyle='rgba(70,140,55,0.45)'; mmx.lineWidth=2; mmx.strokeRect(1,1,W-2,H-2);
 }
+// === PASTE THIS INSIDE YOUR RENDERING/ANIMATION LOOP ===
 
+// Track where the player's camera is looking
+const dir = new THREE.Vector3();
+camera.getWorldDirection(dir);
+
+// Snap light origins to your exact camera position
+flashlight.position.copy(camera.position);
+burstLight.position.copy(camera.position);
+
+// Cast targets out into the scene directly ahead of the camera 
+flashTarget.position.copy(camera.position).addScaledVector(dir, 10);
+burstTarget.position.copy(camera.position).addScaledVector(dir, 10);
+
+// Synchronize volumetric dust cones with camera movement
+if (flashlight.intensity > 0) {
+  flashCone.visible = true;
+  flashConeCore.visible = true;
+
+  // Position the midpoint of the cones slightly forward down the lens axis
+  const coneDist = 7; // Exactly half of the cone height (14 / 2)
+  const conePos = camera.position.clone().addScaledVector(dir, coneDist);
+  flashCone.position.copy(conePos);
+  flashConeCore.position.copy(conePos);
+
+  // Match the cone angle vector with camera vector
+  flashCone.quaternion.setFromUnitVectors(_coneUp, dir);
+  flashConeCore.quaternion.setFromUnitVectors(_coneUp, dir);
+} else {
+  // If flashlight is off, hide the meshes
+  flashCone.visible = false;
+  flashConeCore.visible = false;
+}
 // ============== MAIN LOOP ==============
 let last = performance.now()/1000;
 let mmTick = 0;
@@ -2093,6 +2141,38 @@ function tick(){
       }
     }
   }
+  // === ADD VOLUMETRIC CONE MESHES ===
+const flashConeMat = new THREE.MeshBasicMaterial({
+  color: 0xfff2cc,
+  transparent: true,
+  opacity: 0.09,
+  side: THREE.BackSide,
+  depthWrite: false,
+  depthTest: true
+});
+
+const flashConeCoreMat = new THREE.MeshBasicMaterial({
+  color: 0xfffff0,
+  transparent: true,
+  opacity: 0.07,
+  side: THREE.BackSide,
+  depthWrite: false,
+  depthTest: true
+});
+
+const flashCone = new THREE.Mesh(new THREE.ConeGeometry(3.8, 14, 22, 1, true), flashConeMat);
+const flashConeCore = new THREE.Mesh(new THREE.ConeGeometry(1.2, 13, 14, 1, true), flashConeCoreMat);
+
+// Keeps the blending orderly over distant environmental models
+flashCone.renderOrder = 1; 
+flashConeCore.renderOrder = 2;
+
+scene.add(flashCone);
+scene.add(flashConeCore);
+
+// Math helper for tracking camera look angles
+const _coneUp = new THREE.Vector3(0, 1, 0);
+  
   // halos on remaining dogs (animate only those near player to save perf)
   dogs.forEach(d=>{
     if(d.collected) return;
@@ -2115,8 +2195,43 @@ function tick(){
 
   updateViewModel(dt, now, player.vel.length(), keys['ShiftLeft'] && player.vel.length()>1);
 
-  mmTick += dt;
+mmTick += dt;
   if(mmTick > 0.15){ mmTick = 0; drawMinimap(); }
+
+  // ============================================================
+  // FLASHLIGHT POSITION & CONE ORIENTATION ALIGNMENT
+  // ============================================================
+  const dir = new THREE.Vector3();
+  camera.getWorldDirection(dir);
+
+  // Snap light sources directly to the player's camera position
+  flashlight.position.copy(camera.position);
+  burstLight.position.copy(camera.position);
+
+  // Offset targets forward along the looking path
+  flashTarget.position.copy(camera.position).addScaledVector(dir, 10);
+  burstTarget.position.copy(camera.position).addScaledVector(dir, 10);
+
+  // Handle the retro volumetric dust cones
+  if (flashlight.intensity > 0) {
+    flashCone.visible = true;
+    flashConeCore.visible = true;
+
+    // Push the volumetric cone half of its length forward (14 / 2 = 7)
+    const coneDist = 7; 
+    const conePos = camera.position.clone().addScaledVector(dir, coneDist);
+    flashCone.position.copy(conePos);
+    flashConeCore.position.copy(conePos);
+
+    // Rotate the cones to align with the camera vector
+    flashCone.quaternion.setFromUnitVectors(_coneUp, dir);
+    flashConeCore.quaternion.setFromUnitVectors(_coneUp, dir);
+  } else {
+    // Hide the mesh layers if the light source is disabled
+    flashCone.visible = false;
+    flashConeCore.visible = false;
+  }
+  // ============================================================
 
   renderer.render(scene,camera);
 }
